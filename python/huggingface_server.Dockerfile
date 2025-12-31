@@ -159,6 +159,10 @@ ENV VLLM_NCCL_SO_PATH="/lib/x86_64-linux-gnu/libnccl.so.2"
 # Set the multiprocess method to spawn to avoid issues with cuda initialization for `mp` executor backend.
 ENV VLLM_WORKER_MULTIPROC_METHOD="spawn"
 
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:$(LD_LIBRARY_PATH)
+# Default AWS region when using runai to download from S3 bucket for instance. TODO : pass this at runtime, we set it here just for convenience
+ENV AWS_REGION=eu-west-1
+
 USER 1000
 ENV PYTHONPATH=${WORKSPACE_DIR}/huggingfaceserver
 ENTRYPOINT ["python3", "-m", "huggingfaceserver"]
