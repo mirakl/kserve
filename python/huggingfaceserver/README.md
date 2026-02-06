@@ -216,6 +216,100 @@ curl -H "content-type:application/json" -v localhost:8080/openai/v1/chat/complet
 {"id":"cmpl-87ee252062934e2f8f918dce011e8484","choices":[{"finish_reason":"length","index":0,"message":{"content":"<generated_response>","tool_calls":null,"role":"assistant","function_call":null},"logprobs":null}],"created":1715353461,"model":"gpt2","system_fingerprint":null,"object":"chat.completion","usage":{"completion_tokens":30,"prompt_tokens":3,"total_tokens":33}}
 ```
 
+### Using Remote Storage URIs with vLLM (S3, GCS, Azure, HTTP)
+
+KServe HuggingFace server with vLLM backend supports loading models directly from remote storage URIs (S3, GCS, Azure Blob, HTTP/HTTPS) without downloading the entire model first. This is particularly useful with RunAI Model Streamer for fast model loading.
+
+**Requirements:**
+- Set `--backend=vllm` explicitly when using remote URIs
+- Use `--load-format=runai_streamer` for streaming from remote storage
+- vLLM must be installed with RunAI support: `pip install vllm[runai]`
+
+**Supported URI schemes:**
+- S3: `s3://bucket/path/to/model/`
+- GCS: `gs://bucket/path/to/model/`
+- Azure: `az://container/path/to/model/` or `azure://...`
+- HTTP/HTTPS: `https://example.com/models/model-name/`
+- HDFS: `hdfs://namenode/path/to/model/`
+
+**Example with S3 and RunAI Streamer:**
+
+```yaml
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llm-s3-runai
+spec:
+  predictor:
+    model:
+      modelFormat:
+        name: huggingface
+      args:
+      - --model_name=llama2
+      - --model_id=s3://my-bucket/models/llama-2-7b/
+      - --backend=vllm  # Required for remote URIs
+      - --load-format=runai_streamer  # Fast streaming from S3
+      - --max_model_len=2048
+      - --dtype=bfloat16
+      env:
+      - name: AWS_ACCESS_KEY_ID
+        valueFrom:
+          secretKeyRef:
+            name: aws-credentials
+            key: access-key-id
+      - name: AWS_SECRET_ACCESS_KEY
+        valueFrom:
+          secretKeyRef:
+            name: aws-credentials
+            key: secret-access-key
+      - name: AWS_REGION
+        value: us-east-1
+      resources:
+        limits:
+          cpu: "6"
+          memory: 24Gi
+          nvidia.com/gpu: "1"
+        requests:
+          cpu: "6"
+          memory: 24Gi
+          nvidia.com/gpu: "1"
+```
+
+**For sharded models, use `runai_streamer_sharded`:**
+
+```yaml
+args:
+- --model_id=s3://my-bucket/models/llama-2-70b-sharded/
+- --backend=vllm
+- --load-format=runai_streamer_sharded
+- --tensor_parallel_size=4
+```
+
+**Tunable RunAI Streamer Parameters:**
+
+You can configure RunAI streamer behavior using `--model-loader-extra-config`:
+
+```yaml
+args:
+- --model_id=s3://my-bucket/models/llama/
+- --backend=vllm
+- --load-format=runai_streamer
+- --model-loader-extra-config={"distributed": true, "concurrency": 4, "memory_limit": "4GB"}
+```
+
+Or via environment variables:
+```yaml
+env:
+- name: RUNAI_STREAMER_CONCURRENCY
+  value: "4"
+- name: RUNAI_STREAMER_MEMORY_LIMIT
+  value: "4GB"
+```
+
+**Note:** When using remote URIs, the architecture validation is automatically skipped since the model config cannot be fetched before vLLM initializes. Ensure your model is compatible with vLLM's [supported models](https://docs.vllm.ai/en/latest/models/supported_models.html).
+
+See [example_s3_runai.yaml](example_s3_runai.yaml) for complete examples.
+
 ### KServe HuggingFace vLLM Runtime Support for CPU
 vLLM powered by [Intel® Extension for PyTorch*](https://github.com/intel/intel-extension-for-pytorch) supports all LLM models from vLLM supported models list and can perform optimal model serving on all x86-64 CPUs with, at least, AVX2 support. You can find more information [here](https://docs.vllm.ai/en/stable/getting_started/installation/cpu/index.html). To run the vLLM engine on a CPU, a separate vLLM package is required, which entails creating a different Hugging Face server Docker image. The Docker image supporting the vLLM runtime on GPUs has a '-gpu' suffix in its tag (e.g., kserve/huggingfaceserver:v0.14.0-gpu), while the image for CPU support does not include the suffix (e.g., kserve/huggingfaceserver:v0.14.0). The runtime image to be used will be determined based on whether the InferenceService specifies nvidia.com/gpu in its resource requirements.
 
