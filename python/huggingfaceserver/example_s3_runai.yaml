@@ -1,0 +1,104 @@
+# Example InferenceService using S3 model path with RunAI Streamer
+# This configuration demonstrates how to use RunAI Model Streamer with S3 storage
+# to speed up model loading without downloading the entire model first.
+
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llm-s3-runai-example
+  namespace: default
+spec:
+  predictor:
+    minReplicas: 1
+    model:
+      modelFormat:
+        name: huggingface
+      args:
+        # Model path - can be S3 URI, GCS URI, Azure URI, or HTTP(S) URL
+        - --model_id
+        - s3://your-bucket/path/to/model/
+
+        # Backend must be explicitly set to vllm for remote URIs
+        - --backend
+        - vllm
+
+        # RunAI Streamer load format for fast streaming from S3
+        - --load-format
+        - runai_streamer
+
+        # Optional: Model configuration
+        - --max_model_len
+        - "2048"
+
+        - --dtype
+        - bfloat16
+
+        - --enable_chunked_prefill
+        - "false"
+
+        - --max_num_seqs
+        - "8"
+
+        # Optional: Trust remote code if needed
+        # - --trust_remote_code
+
+      resources:
+        requests:
+          nvidia.com/gpu: "1"
+          memory: 16Gi
+        limits:
+          nvidia.com/gpu: "1"
+          memory: 32Gi
+
+      # Optional: Environment variables for S3 access
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: aws-credentials
+              key: access-key-id
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: aws-credentials
+              key: secret-access-key
+        - name: AWS_REGION
+          value: us-east-1
+
+        # Optional: RunAI Streamer configuration
+        # - name: RUNAI_STREAMER_CONCURRENCY
+        #   value: "4"
+        # - name: RUNAI_STREAMER_MEMORY_LIMIT
+        #   value: "4GB"
+
+---
+# For sharded models, use runai_streamer_sharded:
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: llm-s3-runai-sharded-example
+  namespace: default
+spec:
+  predictor:
+    minReplicas: 1
+    model:
+      modelFormat:
+        name: huggingface
+      args:
+        - --model_id
+        - s3://your-bucket/path/to/sharded-model/
+        - --backend
+        - vllm
+        - --load-format
+        - runai_streamer_sharded  # For sharded models
+        - --max_model_len
+        - "4096"
+        - --tensor_parallel_size
+        - "2"
+      resources:
+        requests:
+          nvidia.com/gpu: "2"
+          memory: 32Gi
+        limits:
+          nvidia.com/gpu: "2"
+          memory: 64Gi
