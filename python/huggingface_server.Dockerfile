@@ -52,9 +52,8 @@ WORKDIR ${WORKSPACE_DIR}
 FROM base AS build
 
 ARG WORKSPACE_DIR
-ARG VLLM_VERSION=0.15.1
-ARG LMCACHE_VERSION=0.3.9
-ARG FLASHINFER_VERSION=0.6.1
+ARG VLLM_VERSION=0.20.0
+ARG LMCACHE_VERSION=0.4.4
 
 WORKDIR ${WORKSPACE_DIR}
 
@@ -87,22 +86,10 @@ RUN --mount=type=cache,target=/root/.cache/uv cd huggingfaceserver && uv sync --
 # Install vllm
 # https://docs.vllm.ai/en/latest/models/extensions/runai_model_streamer.html, https://docs.vllm.ai/en/latest/models/extensions/tensorizer.html
 # https://docs.vllm.ai/en/latest/models/extensions/fastsafetensor.html
-RUN --mount=type=cache,target=/root/.cache/pip pip install vllm[runai,tensorizer,fastsafetensors]==${VLLM_VERSION}
+RUN --mount=type=cache,target=/root/.cache/uv uv pip install vllm[runai,tensorizer,fastsafetensors]==${VLLM_VERSION}
 
 # Install lmcache
-RUN --mount=type=cache,target=/root/.cache/pip pip install lmcache==${LMCACHE_VERSION}
-
-# Use Bash with `-o pipefail` so we can leverage Bash-specific features (like `[[ … ]]` for glob tests)
-# and ensure that failures in any part of a piped command cause the build to fail immediately.
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
-# Install flashinfer
-# https://docs.flashinfer.ai/installation.html
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install flashinfer-cubin==${FLASHINFER_VERSION} && \
-    pip install flashinfer-jit-cache==${FLASHINFER_VERSION} \
-        --extra-index-url https://flashinfer.ai/whl/cu$(echo ${CUDA_VERSION} | cut -d. -f1,2 | tr -d '.') && \
-    flashinfer show-config
+RUN --mount=type=cache,target=/root/.cache/uv uv pip install lmcache==${LMCACHE_VERSION}
 
 # Generate third-party licenses
 COPY pyproject.toml pyproject.toml
@@ -161,6 +148,10 @@ ENV VLLM_NCCL_SO_PATH="/lib/x86_64-linux-gnu/libnccl.so.2"
 # https://github.com/vllm-project/vllm/issues/6152
 # Set the multiprocess method to spawn to avoid issues with cuda initialization for `mp` executor backend.
 ENV VLLM_WORKER_MULTIPROC_METHOD="spawn"
+
+ENV LD_LIBRARY_PATH=/usr/local/nvidia/lib64:/usr/local/cuda/lib64:/usr/local/cuda/targets/x86_64-linux/lib:$(LD_LIBRARY_PATH)
+# Default AWS region when using runai to download from S3 bucket. TODO: pass this at runtime.
+ENV AWS_REGION=eu-west-1
 
 USER 1000
 ENV PYTHONPATH=${WORKSPACE_DIR}/huggingfaceserver

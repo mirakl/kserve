@@ -50,22 +50,37 @@ def list_of_strings(arg):
     return arg.split(",")
 
 
+_REMOTE_URI_PREFIXES = (
+    "s3://", "gs://", "az://", "azure://",
+    "http://", "https://", "ftp://", "hdfs://",
+)
+
+
 def get_model_id_or_path(args: argparse.Namespace) -> Union[str, Path]:
     # If --model_id is specified then pass model_id to HF API, otherwise load the model from /mnt/models
     if args.model_id:
         return cast(str, args.model_id)
+    # For remote URIs (s3://, gs://, etc.), pass directly to vLLM which handles
+    # streaming via load format (e.g., runai_streamer). Skip Storage.download
+    # to avoid attempting a full local download.
+    if isinstance(args.model_dir, str) and args.model_dir.startswith(_REMOTE_URI_PREFIXES):
+        return args.model_dir
     return Path(Storage.download(args.model_dir))
 
 
 def is_vllm_backend_enabled(
     args: argparse.Namespace, model_id_or_path: Union[str, Path]
 ) -> bool:
+    # When backend is explicitly set to vllm, skip architecture validation.
+    # This allows using custom load formats (like runai_streamer) with remote URIs.
+    force_vllm = args.backend == Backend.vllm
     return (
         (args.backend == Backend.vllm or args.backend == Backend.auto)
         and vllm_available()
         and infer_vllm_supported_from_model_architecture(
             model_id_or_path,
             trust_remote_code=args.trust_remote_code,
+            force_vllm=force_vllm,
         )
     )
 
@@ -139,6 +154,12 @@ parser.add_argument(
 )
 parser.add_argument(
     "--return_token_type_ids", action="store_true", help="Return token type ids"
+)
+parser.add_argument(
+    "--return_offsets_mapping",
+    action="store_true",
+    default=False,
+    help="Return start/end character offsets for each token (token_classification only).",
 )
 
 # Create a mutually exclusive group for output format options
@@ -312,6 +333,7 @@ def load_model():
                 tensor_input_names=kwargs.get("tensor_input_names", None),
                 return_token_type_ids=kwargs.get("return_token_type_ids", None),
                 request_logger=request_logger,
+                return_offsets_mapping=kwargs.get("return_offsets_mapping", False),
                 return_probabilities=kwargs.get("return_probabilities", False),
                 return_raw_logits=kwargs.get("return_raw_logits", False),
             )
