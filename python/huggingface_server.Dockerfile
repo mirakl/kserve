@@ -52,9 +52,8 @@ WORKDIR ${WORKSPACE_DIR}
 FROM base AS build
 
 ARG WORKSPACE_DIR
-ARG VLLM_VERSION=0.18.0
-ARG LMCACHE_VERSION=0.4.2
-ARG FLASHINFER_VERSION=0.6.6
+ARG VLLM_VERSION=0.20.0
+ARG LMCACHE_VERSION=0.4.4
 
 WORKDIR ${WORKSPACE_DIR}
 
@@ -87,22 +86,10 @@ RUN --mount=type=cache,target=/root/.cache/uv cd huggingfaceserver && uv sync --
 # Install vllm
 # https://docs.vllm.ai/en/latest/models/extensions/runai_model_streamer.html, https://docs.vllm.ai/en/latest/models/extensions/tensorizer.html
 # https://docs.vllm.ai/en/latest/models/extensions/fastsafetensor.html
-RUN --mount=type=cache,target=/root/.cache/pip pip install vllm[runai,tensorizer,fastsafetensors]==${VLLM_VERSION}
+RUN --mount=type=cache,target=/root/.cache/uv uv pip install vllm[runai,tensorizer,fastsafetensors]==${VLLM_VERSION}
 
 # Install lmcache
-RUN --mount=type=cache,target=/root/.cache/pip pip install lmcache==${LMCACHE_VERSION}
-
-# Use Bash with `-o pipefail` so we can leverage Bash-specific features (like `[[ … ]]` for glob tests)
-# and ensure that failures in any part of a piped command cause the build to fail immediately.
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-
-# Install flashinfer
-# https://docs.flashinfer.ai/installation.html
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install flashinfer-cubin==${FLASHINFER_VERSION} && \
-    pip install flashinfer-jit-cache==${FLASHINFER_VERSION} \
-        --extra-index-url https://flashinfer.ai/whl/cu$(echo ${CUDA_VERSION} | cut -d. -f1,2 | tr -d '.') && \
-    flashinfer show-config
+RUN --mount=type=cache,target=/root/.cache/uv uv pip install lmcache==${LMCACHE_VERSION}
 
 # Generate third-party licenses
 COPY pyproject.toml pyproject.toml

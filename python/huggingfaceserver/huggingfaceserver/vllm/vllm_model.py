@@ -24,17 +24,14 @@ from vllm.engine.protocol import EngineClient
 from vllm.entrypoints.openai.completion.serving import OpenAIServingCompletion
 from vllm.entrypoints.openai.chat_completion.serving import OpenAIServingChat
 from vllm.entrypoints.pooling.embed.serving import ServingEmbedding
-from vllm.entrypoints.pooling.score.serving import ServingScores
+from vllm.entrypoints.pooling.scoring.serving import ServingScores
 from vllm.tool_parsers import ToolParserManager
 from vllm.entrypoints.openai.models.protocol import BaseModelPath
-from vllm.entrypoints.openai.models.serving import OpenAIServingModels, OpenAIModelRegistry
+from vllm.entrypoints.openai.models.serving import OpenAIServingModels
 from vllm.entrypoints.openai.cli_args import validate_parsed_serve_args
 from vllm.entrypoints.chat_utils import load_chat_template
 from vllm.entrypoints.openai.engine.protocol import ErrorResponse as engineError
 from vllm.reasoning import ReasoningParserManager
-from vllm.entrypoints.serve.render.serving import OpenAIServingRender
-from vllm.renderers import renderer_from_config
-from vllm.plugins.io_processors import get_io_processor
 
 from kserve.protocol.rest.openai.errors import create_error_response
 from kserve.protocol.rest.openai import (
@@ -110,7 +107,7 @@ class VLLMModel(OpenAIEncoderModel, OpenAIGenerativeModel):  # pylint:disable=c-
             self.vllm_engine_args.tensor_parallel_size = torch.cuda.device_count()
 
         async with build_async_engine_client_from_engine_args(
-            self.vllm_engine_args, self.args.disable_frontend_multiprocessing
+            self.vllm_engine_args,
         ) as engine_client:
             self.engine_client = engine_client
             vllm_config = self.engine_client.vllm_config
@@ -140,22 +137,12 @@ class VLLMModel(OpenAIEncoderModel, OpenAIGenerativeModel):  # pylint:disable=c-
             )
             await self.openai_serving_models.init_static_loras()
 
-            # vLLM 0.18.0: rendering/preprocessing moved to OpenAIServingRender
-            _renderer = renderer_from_config(vllm_config)
-            _io_processor = get_io_processor(
-                vllm_config,
-                _renderer,
-                getattr(vllm_config.model_config, "io_processor_plugin", None),
-            )
-            _model_registry = OpenAIModelRegistry(
-                model_config=vllm_config.model_config,
-                base_model_paths=self.base_model_paths,
-            )
+            from vllm.entrypoints.serve.render.serving import OpenAIServingRender
+
             openai_serving_render = OpenAIServingRender(
                 model_config=vllm_config.model_config,
-                renderer=_renderer,
-                io_processor=_io_processor,
-                model_registry=_model_registry,
+                renderer=self.engine_client.renderer,
+                model_registry=self.openai_serving_models.registry,
                 request_logger=self.request_logger,
                 chat_template=resolved_chat_template,
                 chat_template_content_format=self.args.chat_template_content_format,
@@ -163,6 +150,7 @@ class VLLMModel(OpenAIEncoderModel, OpenAIGenerativeModel):  # pylint:disable=c-
                 enable_auto_tools=self.args.enable_auto_tool_choice,
                 exclude_tools_when_tool_choice_none=self.args.exclude_tools_when_tool_choice_none,
                 tool_parser=self.args.tool_call_parser,
+                reasoning_parser=self.args.structured_outputs_config.reasoning_parser,
                 log_error_stack=self.args.log_error_stack,
             )
 
@@ -224,7 +212,7 @@ class VLLMModel(OpenAIEncoderModel, OpenAIGenerativeModel):  # pylint:disable=c-
                     request_logger=self.request_logger,
                     log_error_stack=self.args.log_error_stack,
                 )
-                if ("embed" in supported_tasks or "score" in supported_tasks)
+                if ("embed" in supported_tasks or "classify" in supported_tasks)
                 else None
             )
 
@@ -310,9 +298,7 @@ class VLLMModel(OpenAIEncoderModel, OpenAIGenerativeModel):  # pylint:disable=c-
                 message="The model does not support Embeddings API",
                 status_code=HTTPStatus.BAD_REQUEST,
             )
-        response = await self.openai_serving_embedding.create_embedding(
-            request, raw_request
-        )
+        response = await self.openai_serving_embedding(request, raw_request)
 
         if isinstance(response, engineError):
             return create_error_response(
@@ -335,7 +321,7 @@ class VLLMModel(OpenAIEncoderModel, OpenAIGenerativeModel):  # pylint:disable=c-
                 message="The model does not support Rerank API",
                 status_code=HTTPStatus.BAD_REQUEST,
             )
-        response = await self.serving_reranking.do_rerank(request, raw_request)
+        response = await self.serving_reranking(request, raw_request)
 
         if isinstance(response, engineError):
             return create_error_response(
